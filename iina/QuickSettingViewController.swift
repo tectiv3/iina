@@ -246,18 +246,6 @@ class QuickSettingViewController: NSViewController, NSTableViewDataSource, NSTab
       Utility.quickConstraints(["H:|[v]|", "V:|[v]|"], ["v": well])
     }
     
-    if #available(macOS 26, *) {
-      subtitleSwitch.controlSize = .small
-      secondarySubtitleSwitch.controlSize = .small
-
-      speedSlider.neutralValue = 8
-      (audioEQSliders + videoEQSliders + [audioDelaySlider, subDelaySlider, subScaleSlider]).forEach {
-        $0.neutralValue = 0
-      }
-
-      subPosSlider.tintProminence = .none
-    }
-
     // colors
     withAllTableViews { tableView, _ in tableView.backgroundColor = NSColor(named: .sidebarTableBackground)! }
 

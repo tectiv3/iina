@@ -232,6 +232,9 @@ struct Preference {
     static let defaultEncoding = Key("defaultEncoding")
     static let autoSearchOnlineSub = Key("autoSearchOnlineSub")
     static let autoSearchThreshold = Key("autoSearchThreshold")
+    static let rememberLastAudioSubtitleCombination = Key("rememberLastAudioSubtitleCombination")
+    static let lastManualAudioTrackName = Key("lastManualAudioTrackName")
+    static let lastManualSubtitleTrackName = Key("lastManualSubtitleTrackName")
 
     // Network
 
@@ -959,6 +962,9 @@ struct Preference {
     .defaultEncoding: "auto",
     .autoSearchOnlineSub: false,
     .autoSearchThreshold: 20,
+    .rememberLastAudioSubtitleCombination: false,
+    .lastManualAudioTrackName: "",
+    .lastManualSubtitleTrackName: "",
 
     .enableCache: true,
     .defaultCacheSize: 153600,

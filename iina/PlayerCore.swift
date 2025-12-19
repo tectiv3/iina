@@ -225,6 +225,10 @@ class PlayerCore: NSObject {
   var triedUsingExactSeekForCurrentFile: Bool = false
   var useExactSeekForCurrentFile: Bool = true
 
+  // Remember last audio/subtitle track combination
+  private var isApplyingStoredTracks = false
+  private var hasAppliedStoredTracksForCurrentFile = false
+
   var isPlaylistVisible: Bool {
     isInMiniPlayer ? miniPlayer.isPlaylistVisible : mainWindow.sideBarStatus == .playlist
   }
@@ -1213,6 +1217,130 @@ class PlayerCore: NSObject {
     }
     mpv.setInt(name, index)
     getSelectedTracks()
+
+    // Save manual track selection if this is a user-initiated change
+    if !isApplyingStoredTracks && hasAppliedStoredTracksForCurrentFile {
+      saveManualTrackSelection(index, forType: forType)
+    }
+  }
+
+  private func saveManualTrackSelection(_ trackId: Int, forType: MPVTrack.TrackType) {
+    guard Preference.bool(for: .rememberLastAudioSubtitleCombination) else { return }
+
+    switch forType {
+    case .audio:
+      if let track = info.currentTrack(.audio), let identifier = getTrackIdentifier(track) {
+        Preference.set(identifier, for: .lastManualAudioTrackName)
+        log("Saved manual audio track: \(identifier)")
+      }
+    case .sub:
+      // Handle "none" case (track ID 0 means no subtitle)
+      if trackId == 0 {
+        Preference.set("", for: .lastManualSubtitleTrackName)
+        log("Saved manual subtitle track: none")
+      } else if let track = info.currentTrack(.sub), let identifier = getTrackIdentifier(track) {
+        Preference.set(identifier, for: .lastManualSubtitleTrackName)
+        log("Saved manual subtitle track: \(identifier)")
+      }
+    default:
+      // Only save audio and subtitle tracks
+      break
+    }
+  }
+
+  private func getTrackIdentifier(_ track: MPVTrack) -> String? {
+    // Try title first (most specific)
+    if let title = track.title, !title.isEmpty {
+      return title
+    }
+
+    // Fall back to language code
+    if let lang = track.lang, lang != "und", !lang.isEmpty {
+      // For audio tracks, include channel count if available for better matching
+      if track.type == .audio, let channels = track.demuxChannelCount {
+        return "\(lang)_\(channels)ch"
+      }
+      return lang
+    }
+
+    // Last resort: use codec and other info
+    if let codec = track.codec {
+      if track.type == .audio, let channels = track.demuxChannelCount {
+        return "\(codec)_\(channels)ch"
+      }
+      return codec
+    }
+
+    return nil
+  }
+
+  private func applyStoredTrackNames() {
+    guard Preference.bool(for: .rememberLastAudioSubtitleCombination) else {
+      hasAppliedStoredTracksForCurrentFile = false
+      return
+    }
+
+    // Don't override watch-later per-file settings
+    if let currentFile = mpv.getString(MPVProperty.path),
+       Utility.playbackProgressFromWatchLater(currentFile.md5) != nil {
+      log("Skipping stored track application - watch-later data exists")
+      hasAppliedStoredTracksForCurrentFile = true
+      return
+    }
+
+    isApplyingStoredTracks = true
+    defer {
+      isApplyingStoredTracks = false
+      hasAppliedStoredTracksForCurrentFile = true
+    }
+
+    // Try to apply audio track by name
+    if let storedAudioName = Preference.string(for: .lastManualAudioTrackName),
+       !storedAudioName.isEmpty {
+      if let matchingTrack = findTrackByName(storedAudioName, type: .audio) {
+        log("Applying stored audio track: \(storedAudioName) (id: \(matchingTrack.id))")
+        setTrack(matchingTrack.id, forType: .audio)
+      } else {
+        log("Stored audio track '\(storedAudioName)' not found, using language preference")
+      }
+    }
+
+    // Try to apply subtitle track by name
+    if let storedSubName = Preference.string(for: .lastManualSubtitleTrackName) {
+      if storedSubName.isEmpty {
+        // User last selected "none"
+        log("Applying stored subtitle track: none")
+        setTrack(0, forType: .sub)
+      } else if let matchingTrack = findTrackByName(storedSubName, type: .sub) {
+        log("Applying stored subtitle track: \(storedSubName) (id: \(matchingTrack.id))")
+        setTrack(matchingTrack.id, forType: .sub)
+      } else {
+        log("Stored subtitle track '\(storedSubName)' not found, using language preference")
+      }
+    }
+  }
+
+  private func findTrackByName(_ name: String, type: MPVTrack.TrackType) -> MPVTrack? {
+    let tracks: [MPVTrack]
+    switch type {
+    case .audio:
+      tracks = info.audioTracks
+    case .sub:
+      tracks = info.$subTracks.withLock { $0 }
+    default:
+      return nil
+    }
+
+    // Try to find track using the same identifier logic
+    if let exactMatch = tracks.first(where: { getTrackIdentifier($0) == name }) {
+      return exactMatch
+    }
+
+    // Fallback: partial match on identifier (in case metadata slightly differs)
+    return tracks.first(where: {
+      guard let identifier = getTrackIdentifier($0) else { return false }
+      return identifier.contains(name) || name.contains(identifier)
+    })
   }
 
   func setSpeed(_ speed: Double) {
@@ -1983,6 +2111,9 @@ class PlayerCore: NSObject {
     guard info.state.active else { return }
     log("File loaded")
 
+    // Reset flag for new file
+    hasAppliedStoredTracksForCurrentFile = false
+
     info.state = .loaded
 
     // Must force drawing to cover the case where this player was previously used to play a video
@@ -2283,6 +2414,10 @@ class PlayerCore: NSObject {
     log("Track list changed")
     getTrackInfo()
     getSelectedTracks()
+
+    // Apply stored track names if feature is enabled
+    applyStoredTrackNames()
+
     let audioStatus = checkCurrentMediaIsAudio()
     currentMediaIsAudio = audioStatus
 
